@@ -23,7 +23,7 @@ Calls ptrace(2) (`::ptrace`).
 > `::ptrace(request, pid, (void*) nullptr, (void*) nullptr)`, but this removes the hassle
 
 ```c++
-long ptracewrap::ptrace(
+long ptracewrap::ptrace_w_error(
     __ptrace_request request,
     pid_t pid,
     void* addr = nullptr,
@@ -39,7 +39,7 @@ T read(pid_t pid, void* address);
 ```
 
 Reads a `T` object from `address` in `pid`'s address space (Using `PTRACE_PEEKDATA`).
-Can throw `ptracewrap::ptrace_error`.
+Can throw `ptracewrap::ptrace_error` and whatever default constructing a `T` object would throw.
 
 > Note: All functions that take a `void*` that is the address in another process can also be called with
 > a qualified pointer (e.g. `const void*` or `volatile char*`), since they don't actually read from the pointer
