@@ -14,6 +14,7 @@
 #include <type_traits>
 #include <memory>
 #include <string>
+#include <iterator>
 
 #include <sys/ptrace.h>
 #include <sys/types.h>
@@ -245,6 +246,11 @@ namespace detail {
         }
         return result;
     }
+
+    template<class T>
+    struct void_t {
+        typedef void type;
+    };
 }
 
 typedef ::pid_t pid_t;
@@ -386,6 +392,69 @@ void write(::pid_t pid, void* address, const T* from, ::std::size_t n) {
     }
 }
 
+template<class InputIt, class Sentinel = InputIt>
+typename ::ptracewrap::detail::void_t<typename ::std::iterator_traits<InputIt>::value_type>::type
+write(::pid_t pid, const volatile void* address, InputIt first, Sentinel last) {
+    typedef typename ::std::remove_reference<typename ::std::iterator_traits<InputIt>::value_type>::type cv_value_type;
+    typedef typename ::std::remove_cv<cv_value_type>::type value_type;
+    static_assert(::std::is_trivially_copyable<value_type>::value, "Can only ptrace_write trivial types");
+
+    void* write_address = const_cast<void*>(address);
+    char remainder[sizeof(long)];
+    ::std::size_t remainder_pos = 0;
+
+    typedef typename ::std::conditional< ::std::is_volatile<cv_value_type>::value, const volatile value_type&, const value_type&>::type reference;
+    typedef typename ::std::conditional< ::std::is_volatile<cv_value_type>::value, const volatile void*, const void*>::type vp;
+    typedef typename ::std::conditional< ::std::is_volatile<cv_value_type>::value, const volatile char*, const char*>::type cp;
+
+    errno = 0;
+    for (; first != last; ++first) {
+        reference value = static_cast<reference>(*first);
+        ::std::size_t to_write = sizeof(value_type);
+        cp pointer = static_cast<cp>(static_cast<vp>(::std::addressof(value)));
+        if (remainder_pos) {
+            if (to_write >= sizeof(long) - remainder_pos) {
+                ::ptracewrap::detail::memcpy(static_cast<char*>(static_cast<void*>(remainder)) + remainder_pos, pointer, sizeof(long) - remainder_pos);
+                to_write -= sizeof(long) - remainder_pos;
+                pointer += sizeof(long) - remainder_pos;
+
+                long remainder_as_long;
+                ::std::memcpy(&remainder_as_long, remainder, sizeof(long));
+                ::ptracewrap::detail::ptrace_noreset_errno(PTRACE_POKEDATA, pid, write_address, reinterpret_cast<void*>(remainder_as_long));
+                write_address = static_cast<void*>(static_cast<char*>(write_address) + sizeof(long));
+            } else {
+                ::ptracewrap::detail::memcpy(static_cast<char*>(static_cast<void*>(remainder)) + remainder_pos, pointer, to_write);
+                remainder_pos += to_write;
+                to_write = 0;
+            }
+        }
+
+        while (to_write >= sizeof(long)) {
+            char data[sizeof(long)];
+            ::ptracewrap::detail::memcpy(data, pointer, sizeof(long));
+            long data_as_long;
+            ::std::memcpy(&data_as_long, data, sizeof(long));
+            ::ptracewrap::detail::ptrace_noreset_errno(PTRACE_POKEDATA, pid, write_address, reinterpret_cast<void*>(data_as_long));
+            write_address = static_cast<void*>(static_cast<char*>(write_address) + sizeof(long));
+            to_write -= sizeof(long);
+            if (to_write) pointer += sizeof(long);
+        }
+
+        if (to_write) {
+            remainder_pos = to_write;
+            ::ptracewrap::detail::memcpy(remainder, pointer, to_write);
+        }
+    }
+
+    if (remainder_pos != 0) {
+        long last = ::ptracewrap::detail::ptrace_noreset_errno(PTRACE_PEEKDATA, pid, write_address);
+        ::std::memcpy(remainder, static_cast<char*>(static_cast<void*>(&last)) + remainder_pos, sizeof(long) - remainder_pos);
+        long remainder_as_long;
+        ::std::memcpy(&remainder_as_long, remainder, sizeof(long));
+        ::ptracewrap::detail::ptrace_noreset_errno(PTRACE_POKEDATA, pid, write_address, reinterpret_cast<void*>(remainder_as_long));
+    }
+}
+
 template<class T>
 void write(::pid_t pid, const volatile void* address, const T* from, ::std::size_t n) {
     return ::ptracewrap::write(pid, const_cast<void*>(address), from, n);
@@ -396,7 +465,7 @@ template<class T>
 T read_non_trivial(::pid_t pid, const volatile void* address) {
     alignas(T) char out[sizeof(T)];
     ::ptracewrap::read_to<char>(pid, address, out, sizeof(out));
-    return ::std::move(*static_cast<T*>(static_cast<void*>(out)));
+    return static_cast<T&&>(*static_cast<T*>(static_cast<void*>(out)));
 }
 
 // Like ptrace_read_to, but relies on undefined behaviour for non trivial types (`memcpy`s non trivial types)
@@ -428,8 +497,5 @@ void write_non_trivial(::pid_t pid, const volatile void* address, const T& data)
 }
 
 }
-
-// TODO: template<class T, class InputIt> void write(::pid_t pid, void* address, InputIt first, InputIt last);
-// TODO: template<class T, class OutputIt> void read(::pid_t pid, void* address, OutputIt it, std::size_t n);
 
 #endif  // PTRACEWRAP_PTRACEWRAP_HPP_

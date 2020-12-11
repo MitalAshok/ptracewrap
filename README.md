@@ -19,7 +19,7 @@ long ptracewrap::ptrace(
 
 Calls ptrace(2) (`::ptrace`).
 
-> Note: Since `::ptrace` is implemented as a variadic function on may systems, to call it properly, you have to do
+> Note: Since `::ptrace` is implemented as a variadic function on many systems, to call it properly, you have to do
 > `::ptrace(request, pid, (void*) nullptr, (void*) nullptr)`, but this removes the hassle
 
 ```c++
@@ -75,6 +75,15 @@ void write(pid_t pid, void* address, const T* from, std::size_t n);
 
 Writes `n` objects of type `T`, pointed to by `from`, sequentially to `address` in process with pid `pid`'s
 address space (Using `PTRACE_POKEDATA`).
+Can throw `ptracewrap::ptrace_error`.
+
+```c++
+template<class InputIt, class Sentinel = InputIt>
+void write(pid_t pid, void* address, InputIt first, Sentinel last);
+```
+
+Writes objects to `*first++`, until it equals `last`, from sequential bytes starting at `address` in the process with
+pid `pid`'s address space (Using `PTRACE_POKEDATA`).
 Can throw `ptracewrap::ptrace_error`.
 
 ### Unsafe functions
